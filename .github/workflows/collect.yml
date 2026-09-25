@@ -29,6 +29,8 @@ jobs:
       - name: Collect snapshot
         id: collect
         continue-on-error: true   # exit 2 = API/network failure; still re-render and commit the log
+        env:
+          VAST_API_KEY: ${{ secrets.VAST_API_KEY }}
         run: python collect.py
 
       - name: Render charts

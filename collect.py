@@ -3,7 +3,11 @@
 Stdlib only. Appends long-format stats rows to data/prices.csv, one line per
 run to data/collect.log, and a compact raw snapshot to data/raw/YYYY-MM-DD.jsonl.gz.
 
-Exit codes: 0 ok, 2 network/API failure (nothing written to prices.csv).
+Exit codes: 0 ok, 2 network/API failure or capped unauthenticated result
+(nothing written to prices.csv).
+
+API key lookup: env VAST_API_KEY, then ~/.config/vastai/vast_api_key. Without a
+key Vast caps search at 64 offers; a keyless run that hits the cap is discarded.
 
 Test-only override: VPT_RESOLVE=<ip> makes console.vast.ai resolve to that IP
 (TLS SNI/Host stay console.vast.ai). Never used unless explicitly set.
@@ -24,6 +28,7 @@ HOST = "console.vast.ai"
 URL = f"https://{HOST}/api/v0/search/asks/"
 GPUS = ["RTX 3090", "RTX 4090", "RTX 5090"]
 RELIABLE_MIN = 0.98
+UNAUTH_CAP = 64  # Vast returns at most this many offers without an API key
 RETRIES = 3
 TIMEOUT = 30
 
@@ -57,6 +62,9 @@ def _install_test_resolve():
 
 
 def _api_key():
+    key = os.environ.get("VAST_API_KEY", "").strip()
+    if key:
+        return key
     try:
         key = KEY_PATH.read_text(encoding="utf-8").strip()
         return key or None
@@ -171,15 +179,27 @@ def main():
     _install_test_resolve()
     ts = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
 
+    has_key = _api_key() is not None
+    if not has_key:
+        log(f"{ts} WARN no API key (env VAST_API_KEY or {KEY_PATH}) - search capped at {UNAUTH_CAP} offers")
+
     results = {}
+    raw_counts = {}
     try:
         for gpu in GPUS:
-            results[gpu] = normalise(fetch_offers(gpu))
+            offers = fetch_offers(gpu)
+            raw_counts[gpu] = len(offers)
+            results[gpu] = normalise(offers)
     except DNSUnavailable:
         log(f"{ts} SKIP network/DNS unavailable - skipped")
         return 2
     except Exception as exc:  # noqa: BLE001
         log(f"{ts} FAIL {exc} - nothing written")
+        return 2
+
+    if not has_key and any(n == UNAUTH_CAP for n in raw_counts.values()):
+        counts = " ".join(f"{g.split()[-1]}={raw_counts[g]}" for g in GPUS)
+        log(f"{ts} SKIP unauthenticated result capped at {UNAUTH_CAP} ({counts}) - nothing written")
         return 2
 
     rows = []
