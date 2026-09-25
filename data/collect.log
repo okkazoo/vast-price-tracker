@@ -1,0 +1,4 @@
+2026-09-25T05:35Z OK median/gpu/hr 3090=0.1756(n=149) 4090=0.4956(n=218) 5090=0.6678(n=315)
+2026-09-25T05:35Z SKIP network/DNS unavailable - skipped
+2026-09-25T05:36Z OK median/gpu/hr 3090=0.1741(n=148) 4090=0.4956(n=219) 5090=0.6678(n=317)
+2026-09-25T05:39Z SKIP network/DNS unavailable - skipped
