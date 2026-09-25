@@ -11,11 +11,54 @@ median, p75, p90, mean, `cheap5` (mean of the 5 cheapest), and a GPU-weighted me
 
 | File | What |
 |---|---|
-| `collect.py` | Queries the Vast search API (stdlib only; API key from env `VAST_API_KEY`, else `~/.config/vastai/vast_api_key`), appends 6 rows to `data/prices.csv`, logs one line to `data/collect.log`, keeps a raw per-offer snapshot in `data/raw/` (local only, gitignored). All-or-nothing: if any GPU query fails, nothing is written and it exits 2. |
-| `chart.py` | Renders `chart.html` (interactive) and `chart.png` (static, `all` subset). |
+| `collect.py` | Queries the Vast search API (stdlib only; API key from env `VAST_API_KEY`, else `~/.config/vastai/vast_api_key`), appends 6 rows (plus the card rows, below) to `data/prices.csv`, logs one line to `data/collect.log`, keeps a raw per-offer snapshot in `data/raw/` (local only, gitignored). All-or-nothing: if any GPU query fails, nothing is written and it exits 2. |
+| `cards.json` | Tracked cards and a snapshot of the dashboard's local search state (see below). Read by `collect.py`. |
+| `sync_cards.py` | Local only (PyYAML + the sibling repos). Rewrites `cards.json` from the card.yml files and the dashboard's `data/` files. |
+| `chart.py` | Renders `chart.html` (interactive) and `chart.png` (static, `all` subset). Card subsets are ignored here; the dashboard's GPU Prices tab shows them. |
 | `run.cmd` | Runs collect then chart; output appended to `data/run.log`. |
 | `install_task.ps1` / `uninstall_task.ps1` | Windows Scheduled Task on/off. Optional fallback only; not installed. |
 | `.github/workflows/collect.yml` | The collector: hourly job on GitHub Actions. |
+
+## Per-card subsets (`cards.json`, `sync_cards.py`)
+
+For each card in `cards.json`, `collect.py` runs the **same search the dashboard's Offers /
+Offers-Auto pages run for that card** (vastai-api-manager `search_card_offers`, default page
+state: card max_price / min_disk_gb / min_download_speed, Secure off, preferred GPU types on,
+verified per card or settings, favorites passed, blocked hidden). One API query per card, over
+every GPU type the card lists. It writes subset `card:<name>` rows: one per GPU type, plus one with
+gpu `ALL` over every matching offer. A GPU type with no match still gets a row with `n_offers` 0
+and empty prices. The card queries are part of the all-or-nothing run: if one fails, nothing is written.
+
+What is mirrored: the query body `search_offers` builds (including its quirks, e.g. min_vram_gb goes
+to the server unscaled and is re-checked in MB client-side); the box-profile gates
+(`min_cuda_max_good`, `require_avx`); single-GPU offers only; `dph_total <= max_price`; up/down
+speed floors; the per-GPU column cap (`column_cap_broad`, cheapest first); favorite and fast-machine
+offers that bypass max_price and the cap; the blocklist; the pre-AVX2 CPU screen and machine
+denylist; and the host-viability gate (cuda_max_good, has_avx, gpu_types, cpu_ram/gpu_ram in MB,
+inet, reliability2). Offers missing a field are kept, as in the dashboard.
+
+Not mirrored, because it is runtime state on the laptop: the anti-phantom ask-table swap, the
+dead-offer / dead-machine caches, the soft blocklist (`launch_outcomes.json`, 6 h window), and
+`min_cpu_features` (no tracked card uses it; `sync_cards.py` warns if one does).
+
+Vast returns a different mix of machines for identical back-to-back queries (about a quarter
+change), so treat a single snapshot's `min` as noisy. The dashboard has the same churn.
+
+`cards.json` is generated. To track another card, add it (or refresh after editing a card or the
+dashboard's blocklist/favorites) and commit:
+
+```
+python sync_cards.py <card-name> [<card-name> ...]   # adds to "tracked" and refreshes all
+python sync_cards.py                                  # refresh everything already tracked
+```
+
+It snapshots these laptop-only inputs so Actions applies them too: each card's `gpu_requirements`
+(`comfyui-projects/*/cards/<name>/card.yml`), the active box profile's gates
+(`data/box_profiles.json`), `verified_default` / `exclude_external` / `broad_fetch_limit`
+(`data/settings.json`), blocklist machine+host ids (`data/blocklist.json`), favorite machine+host
+ids (`data/favorites.json`), fast-machine ids (`data/fast_machines.json`), and the provider's
+hard-coded machine denylist. Only ids are copied, never notes. `column_cap_broad` is read from
+`settings.json` too when present (default 100).
 
 ## Viewing
 
