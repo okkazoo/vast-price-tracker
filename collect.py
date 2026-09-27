@@ -9,6 +9,10 @@ gpu "ALL" row (see the card section below and README).
 Exit codes: 0 ok, 2 network/API failure or capped unauthenticated result
 (nothing written to prices.csv).
 
+Recency guard: if the last prices.csv row is < 45 min old, print one line, write
+nothing, exit 0 (and append skipped=true to $GITHUB_OUTPUT if set). Bypass with
+env VPT_FORCE=1 or --force.
+
 API key lookup: env VAST_API_KEY, then ~/.config/vastai/vast_api_key. Without a
 key Vast caps search at 64 offers; a keyless run that hits the cap is discarded.
 
@@ -409,7 +413,51 @@ def log(line):
     print(line)
 
 
+RECENT_MIN = 45  # the workflow fires every 15 min; skip if the last snapshot is newer than this
+
+
+def last_snapshot_ts(csv_path=None):
+    """ts_utc of the last data row in prices.csv as an aware datetime, or None."""
+    try:
+        with open(csv_path or CSV_PATH, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 65536))
+            lines = f.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        cell = line.split(",", 1)[0].strip()
+        try:
+            return dt.datetime.strptime(cell, "%Y-%m-%dT%H:%MZ").replace(tzinfo=dt.timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def recent_snapshot(now=None, csv_path=None, window_min=RECENT_MIN):
+    """-> last ts if it is less than window_min minutes before now, else None."""
+    last = last_snapshot_ts(csv_path)
+    now = now or dt.datetime.now(dt.timezone.utc)
+    if last is not None and now - last < dt.timedelta(minutes=window_min):
+        return last
+    return None
+
+
+def forced(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    return os.environ.get("VPT_FORCE", "").strip() == "1" or "--force" in argv
+
+
 def main():
+    if not forced():
+        last = recent_snapshot()
+        if last is not None:
+            print(f"recent snapshot {last.strftime('%Y-%m-%dT%H:%MZ')}, skipping")
+            out = os.environ.get("GITHUB_OUTPUT")
+            if out:
+                with open(out, "a", encoding="utf-8") as f:
+                    f.write("skipped=true\n")
+            return 0
     _install_test_resolve()
     ts = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
 

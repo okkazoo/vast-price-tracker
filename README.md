@@ -87,7 +87,7 @@ while the VPN is up (and while the laptop is off). The charts still re-render.
 
 ## GitHub Actions (the collector)
 
-1. The workflow runs hourly at :17 UTC (plus a manual "Run workflow" button), and commits
+1. The workflow targets one snapshot per hour (15-min trigger + 45-min guard, below; plus a manual "Run workflow" button), and commits
    `data/prices.csv`, `data/collect.log`, `chart.html` and `chart.png` when they change.
 2. It needs the repo secret **`VAST_API_KEY`**: a restricted, search-only Vast API key, passed to
    `collect.py` as an env var. Without a key Vast caps search results at **64 offers**, so the
@@ -96,6 +96,7 @@ while the VPN is up (and while the laptop is off). The charts still re-render.
 3. The local Scheduled Task is not used; `git pull` to get the latest data and chart.
 
 GitHub's scheduled runs can be delayed by several minutes.
+The cron fires every 15 min (:04/:19/:34/:49) and `collect.py` skips (exit 0, no commit) when the last snapshot is < 45 min old, because GitHub drops scheduled runs on quiet repos (an hourly cron fired only every 3-5 h); force with the dispatch input `force` / `VPT_FORCE=1` / `--force`.
 
 ## Test-only override
 

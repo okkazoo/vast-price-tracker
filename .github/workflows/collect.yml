@@ -2,8 +2,13 @@ name: collect
 
 on:
   schedule:
-    - cron: '17 * * * *'
+    - cron: '4,19,34,49 * * * *'   # every 15 min; collect.py skips if the last snapshot is < 45 min old
   workflow_dispatch:
+    inputs:
+      force:
+        description: 'Collect even if the last snapshot is < 45 min old'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -31,15 +36,23 @@ jobs:
         continue-on-error: true   # exit 2 = API/network failure; still re-render and commit the log
         env:
           VAST_API_KEY: ${{ secrets.VAST_API_KEY }}
+          VPT_FORCE: ${{ inputs.force && '1' || '0' }}
         run: python collect.py
 
       - name: Render charts
+        if: steps.collect.outputs.skipped != 'true'
         run: python chart.py
 
       - name: Commit if changed
+        if: steps.collect.outputs.skipped != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # chart.html embeds a generation timestamp; only commit when data or log changed
+          if git diff --quiet -- data/prices.csv data/collect.log; then
+            echo "No data/log changes."
+            exit 0
+          fi
           git add data/prices.csv data/collect.log chart.html chart.png
           if git diff --cached --quiet; then
             echo "No changes."
